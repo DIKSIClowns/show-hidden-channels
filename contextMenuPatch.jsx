@@ -1,12 +1,9 @@
 const { React, getModule } = require("powercord/webpack");
 const { getOwnerInstance } = require("powercord/util");
+const { Menu: { MenuGroup, MenuItem, MenuCheckboxItem } } = require("powercord/components");
 
 module.exports = function (modules) {
-    const { _1024, can, currentUser, menuModule: {
-        MenuGroup,
-        MenuItem,
-        MenuCheckboxItem
-    }, changeVisibility, getVisibility } = modules;
+    const { VIEW_CHANNEL, can, currentUser, changeVisibility, getVisibility } = modules;
 
     return function (args, res) {
         var channel, guild;
@@ -14,7 +11,7 @@ module.exports = function (modules) {
         else channel = args[0].channel, guild = args[0].guild;
         res.props.children.splice(3, 0, (
             <MenuGroup>
-                {(!can(_1024, currentUser, channel) && (channel.topic && channel.topic.length > 0)) ?
+                {(!can(VIEW_CHANNEL, currentUser, channel) && (channel.topic && channel.topic.length > 0)) ?
                     <MenuItem
                         id={"showhiddenchannels-channeltopic"}
                         label={"View Channel Topic"}

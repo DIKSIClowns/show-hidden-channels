@@ -1,6 +1,6 @@
 const { Plugin } = require('powercord/entities');
 const { getModule } = require("powercord/webpack");
-const { inject, uninject, isInjected } = require("powercord/injector");
+const { inject, uninject } = require("powercord/injector");
 const contextMenuPatch = require("./contextMenuPatch.jsx");
 var _this;
 
@@ -9,6 +9,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
         _this = this;
 
         this.patchedContexts = [];
+        this.patchedLists = [];
         this.shouldShow = true;
 
         const ChannelList = await getModule(m => m.default && m.default.displayName == "NavigableChannels");
@@ -16,31 +17,30 @@ module.exports = class ShowHiddenChannels extends Plugin {
         const contextMenuModule = await getModule(["openContextMenu"]);
 
         this.can = (await getModule(["can", "canEveryone"])).can;
-        this._1024 = (await getModule(["Permissions"])).Permissions.VIEW_CHANNEL;
+        this.VIEW_CHANNEL = (await getModule(["Permissions"])).Permissions.VIEW_CHANNEL;
         this.currentUser = await (await getModule(["fetchCurrentUser"])).fetchCurrentUser();
         this.ChannelStore = await getModule(["getChannels"]);
         this.channelObject = await getModule(m => m.prototype && m.prototype.getGuildId && m.prototype.isManaged);
         this.channelClasses = await getModule(["modeUnread", "modeLocked"]);
         const UnreadModule = await getModule(["hasUnread", "getMentionCount"]);
-        const menuModule = await getModule(["MenuItem"]);
 
         const patchContextMenu = contextMenuPatch({
-            _1024: this._1024,
+            VIEW_CHANNEL: this.VIEW_CHANNEL,
             can: this.can,
             currentUser: this.currentUser,
-            menuModule,
-            changeVisibility: () => { this.shouldShow = !this.shouldShow; },
+            changeVisibility: () => { this.shouldShow = !this.shouldShow; !this.shouldShow && this.cleanUpListPatches(); },
             getVisibility: () => this.shouldShow
         });
 
         inject("show-hidden-channels_channelListPatch", ChannelList, "default", this.patchChannelList, true);
+        ChannelList.default.displayName = "NavigableChannels";
         inject("show-hidden-channels_channelItemPatch", ChannelItem.prototype, "render", this.patchChannelItem);
         inject("show-hidden-channels_unreadPatch", UnreadModule, "hasUnread", function (args, res) {
-            if (_this.can(_this._1024, _this.currentUser, _this.ChannelStore.getChannel(args[0]))) return res;
+            if (_this.can(_this.VIEW_CHANNEL, _this.currentUser, _this.ChannelStore.getChannel(args[0]))) return res;
             return false;
         });
         inject("show-hidden-channels_mentionsPatch", UnreadModule, "getMentionCount", function (args, res) {
-            if (_this.can(_this._1024, _this.currentUser, _this.ChannelStore.getChannel(args[0]))) return res;
+            if (_this.can(_this.VIEW_CHANNEL, _this.currentUser, _this.ChannelStore.getChannel(args[0]))) return res;
             return 0;
         });
         inject("show-hidden-channels_openContextMenuPatch", contextMenuModule, "openContextMenu", function (args, res) {
@@ -51,7 +51,9 @@ module.exports = class ShowHiddenChannels extends Plugin {
                     inject(`show-hidden-channels_${menu.type.displayName}Patch`, menu.type.prototype, "render", patchContextMenu);
                 } else {
                     const m = getModule(m => m.default == menu.type, false)
-                    inject(`show-hidden-channels_${menu.type.displayName}Patch`, m, "default", patchContextMenu);
+                    const name = menu.type.displayName;
+                    inject(`show-hidden-channels_${name}Patch`, m, "default", patchContextMenu);
+                    m.default.displayName = name;
                 }
                 _this.patchedContexts.push(menu.type.displayName);
             }
@@ -60,29 +62,25 @@ module.exports = class ShowHiddenChannels extends Plugin {
     }
 
     pluginWillUnload() {
-        if (isInjected("show-hidden-channels_channelListPatch")) uninject("show-hidden-channels_channelListPatch");
-        if (isInjected("show-hidden-channels_channelItemPatch")) uninject("show-hidden-channels_channelItemPatch");
-        if (isInjected("show-hidden-channels_unreadPatch")) uninject("show-hidden-channels_unreadPatch");
-        if (isInjected("show-hidden-channels_mentionsPatch")) uninject("show-hidden-channels_mentionsPatch");
-        if (isInjected("show-hidden-channels_openContextMenuPatch")) uninject("show-hidden-channels_openContextMenuPatch");
+        uninject("show-hidden-channels_channelListPatch");
+        uninject("show-hidden-channels_channelItemPatch");
+        uninject("show-hidden-channels_unreadPatch");
+        uninject("show-hidden-channels_mentionsPatch");
+        uninject("show-hidden-channels_openContextMenuPatch");
         this.patchedContexts.forEach((e, i, a) => {
-            const id = `show-hidden-channels_${e}Patch`;
-            if (isInjected(id)) uninject(id);
+            uninject(`show-hidden-channels_${e}Patch`);
             a.splice(i, 1);
         });
+        this.cleanUpListPatches();
     }
 
     patchChannelList(args) {
-        const { _1024, can, currentUser, ChannelStore, channelObject, shouldShow } = _this;
+        if (_this.patchedLists.find(v => args[0].channels == v.channels)) return args;
+        if (!_this.shouldShow) return args;
+        const { VIEW_CHANNEL, can, currentUser, ChannelStore, channelObject } = _this;
 
         const channels = Object.values(ChannelStore.getChannels()).filter(c => c.guild_id == args[0].guild.id).sort((a, b) => a.position - b.position);
-        const hiddenChannels = channels.filter(c => c.type != 4 && !can(_1024, currentUser, c));
-        if (!shouldShow) {
-            if (args[0].channels._hiddenShown) {
-                return _this.cleanUpListPatch(args, hiddenChannels);
-            }
-            return args
-        };
+        const hiddenChannels = channels.filter(c => c.type != 4 && !can(VIEW_CHANNEL, currentUser, c));
 
         hiddenChannels.forEach(v => {
             if (args[0].channels[v.type == 0 ? "SELECTABLE" : v.type].find(c => c.channel.id == v.id) ||
@@ -104,30 +102,33 @@ module.exports = class ShowHiddenChannels extends Plugin {
             }
         });
 
-        args[0].channels._hiddenShown = true;
-
         return args;
     }
 
-    cleanUpListPatch(args, hiddenChannels) {
-        for (var k in args[0].channels) {
-            if (!Array.isArray(args[0].channels[k])) continue;
-            args[0].channels[k] = args[0].channels[k].filter(c =>
-                !hiddenChannels.find(c1 => c1.id == c.channel.id)
-            );
-        }
-        for (var k in args[0].categories) {
-            args[0].categories[k] = args[0].categories[k].filter(c =>
-                !hiddenChannels.find(c1 => c1.id == c.channel.id)
-            );
-        }
-        delete args[0].channels._hiddenShown;
-        return args;
+    cleanUpListPatches() {
+        this.patchedLists.forEach((v, i, a) => {
+            const channels = Object.values(this.ChannelStore.getChannels()).filter(c => c.guild_id == v.guild.id).sort((a, b) => a.position - b.position);
+            const hiddenChannels = channels.filter(c => c.type != 4 && !can(this.VIEW_CHANNEL, this.currentUser, c));
+
+            for (var k in v.channels) {
+                if (!Array.isArray(v.channels[k])) continue;
+                v.channels[k] = v.channels[k].filter(c =>
+                    !hiddenChannels.find(c1 => c1.id == c.channel.id)
+                );
+            }
+            for (var k in v.categories) {
+                v.categories[k] = v.categories[k].filter(c =>
+                    !hiddenChannels.find(c1 => c1.id == c.channel.id)
+                );
+            }
+
+            a.splice(i, 1);
+        });
     }
 
-    patchChannelItem(args, res) {
-        const { _1024, can, currentUser, channelClasses } = _this;
-        if (!can(_1024, currentUser, this.props.channel)) {
+    patchChannelItem(_, res) {
+        const { VIEW_CHANNEL, can, currentUser, channelClasses } = _this;
+        if (!can(VIEW_CHANNEL, currentUser, this.props.channel)) {
             this.props.onClick = function () { };
             this.props.onMouseDown = function () { };
 

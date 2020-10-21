@@ -221,7 +221,6 @@ module.exports = class ShowHiddenChannels extends Plugin {
 
     patchChannelItem(_, res) {
         const { VIEW_CHANNEL, can, currentUser, channelClasses } = _this;
-        console.info(this, res);
         if (!can(VIEW_CHANNEL, currentUser, this.props.channel)) {
             this.props.onClick = function () {};
             this.props.onMouseDown = function () {};

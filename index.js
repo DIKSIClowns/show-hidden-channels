@@ -16,7 +16,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             m => m.default && m.default.displayName == "NavigableChannels"
         );
         const ChannelItem = await getModule(
-            m => m.displayName == "ChannelItem"
+            m => m.default && m.default.displayName == "ChannelItem"
         );
         const contextMenuModule = await getModule(["openContextMenu"]);
 
@@ -55,10 +55,12 @@ module.exports = class ShowHiddenChannels extends Plugin {
         ChannelList.default.displayName = "NavigableChannels";
         inject(
             "show-hidden-channels_channelItemPatch",
-            ChannelItem.prototype,
-            "render",
-            this.patchChannelItem
+            ChannelItem,
+            "default",
+            this.patchChannelItem,
+            true
         );
+        ChannelList.default.displayName = "ChannelItem";
         inject(
             "show-hidden-channels_unreadPatch",
             UnreadModule,
@@ -219,22 +221,22 @@ module.exports = class ShowHiddenChannels extends Plugin {
         });
     }
 
-    patchChannelItem(_, res) {
+    patchChannelItem(args) {
         const { VIEW_CHANNEL, can, currentUser, channelClasses } = _this;
-        if (!can(VIEW_CHANNEL, currentUser, this.props.channel)) {
-            this.props.onClick = function () {};
-            this.props.onMouseDown = function () {};
+        if (!can(VIEW_CHANNEL, currentUser, args[0].channel)) {
+            args[0].onClick = function () {};
+            args[0].onMouseDown = function () {};
 
-            const hasLocked = (res.props.className || "")
+            const hasLocked = (args[0].className || "")
                 .split(" ")
                 .indexOf(channelClasses.modeLocked);
 
-            if (hasLocked == -1) {
-                res.props.className =
-                    res.props.className + " " + channelClasses.modeLocked;
+            if (hasLocked === -1) {
+                args[0].className =
+                    args[0].className + " " + channelClasses.modeLocked;
             }
         }
 
-        return res;
+        return args;
     }
 };

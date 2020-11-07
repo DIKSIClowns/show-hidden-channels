@@ -60,7 +60,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             this.patchChannelItem,
             true
         );
-        ChannelList.default.displayName = "ChannelItem";
+        ChannelItem.default.displayName = "ChannelItem";
         inject(
             "show-hidden-channels_unreadPatch",
             UnreadModule,

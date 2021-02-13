@@ -155,7 +155,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             channelObject
         } = _this;
 
-        const channels = Object.values(ChannelStore.getGuildChannels())
+        const channels = Object.values(ChannelStore.getMutableGuildChannels())
             .filter(c => c.guild_id == args[0].guild.id)
             .sort((a, b) => a.position - b.position);
         const hiddenChannels = channels.filter(
@@ -198,7 +198,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
 
     cleanUpListPatches() {
         this.patchedLists.forEach((v, i, a) => {
-            const channels = Object.values(this.ChannelStore.getGuildChannels())
+            const channels = Object.values(this.ChannelStore.getMutableGuildChannels())
                 .filter(c => c.guild_id == v.guild.id)
                 .sort((a, b) => a.position - b.position);
             const hiddenChannels = channels.filter(

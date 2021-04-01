@@ -28,10 +28,6 @@ module.exports = function (modules) {
                     action={function () {
                         changeVisibility();
                         getOwnerInstance(document.querySelector(`#${res.props.navId}`)).forceUpdate();
-                        getModule(["dispatch"]).then(async m => {
-                            const ActionTypes = (await getModule(["ActionTypes"])).ActionTypes;
-                            m.dispatch({ type: ActionTypes.CHANNEL_UPDATE, channel: channel });
-                        });
                     }}
                     checked={!getVisibility()}
                 ></MenuCheckboxItem>

@@ -1,6 +1,12 @@
 const { Plugin } = require("powercord/entities");
-const { getModule } = require("powercord/webpack");
+const {
+    getModule,
+    constants: {
+        Permissions: { VIEW_CHANNEL }
+    }
+} = require("powercord/webpack");
 const { inject, uninject } = require("powercord/injector");
+const { findInReactTree } = require("powercord/util");
 const contextMenuPatch = require("./contextMenuPatch.jsx");
 var _this;
 
@@ -21,9 +27,6 @@ module.exports = class ShowHiddenChannels extends Plugin {
         const contextMenuModule = await getModule(["openContextMenu"]);
 
         this.can = (await getModule(["can", "canEveryone"])).can;
-        this.VIEW_CHANNEL = (
-            await getModule(["Permissions"])
-        ).Permissions.VIEW_CHANNEL;
         this.currentUser = await (
             await getModule(["fetchCurrentUser"])
         ).fetchCurrentUser();
@@ -35,12 +38,12 @@ module.exports = class ShowHiddenChannels extends Plugin {
         const UnreadModule = await getModule(["hasUnread", "getMentionCount"]);
 
         const patchContextMenu = contextMenuPatch({
-            VIEW_CHANNEL: this.VIEW_CHANNEL,
+            VIEW_CHANNEL: VIEW_CHANNEL,
             can: this.can,
             currentUser: this.currentUser,
             changeVisibility: () => {
                 this.shouldShow = !this.shouldShow;
-                !this.shouldShow && this.cleanUpListPatches();
+                if (!this.shouldShow) this.cleanUpListPatches();
             },
             getVisibility: () => this.shouldShow
         });
@@ -54,11 +57,17 @@ module.exports = class ShowHiddenChannels extends Plugin {
         );
         ChannelList.default.displayName = "NavigableChannels";
         inject(
+            "show-hidden-channels_channelItemPrePatch",
+            ChannelItem,
+            "default",
+            this.prepatchChannelItem,
+            true
+        );
+        inject(
             "show-hidden-channels_channelItemPatch",
             ChannelItem,
             "default",
-            this.patchChannelItem,
-            true
+            this.patchChannelItem
         );
         ChannelItem.default.displayName = "ChannelItem";
         inject(
@@ -68,7 +77,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             function (args, res) {
                 if (
                     _this.can(
-                        _this.VIEW_CHANNEL,
+                        VIEW_CHANNEL,
                         _this.currentUser,
                         _this.ChannelStore.getChannel(args[0])
                     )
@@ -84,7 +93,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             function (args, res) {
                 if (
                     _this.can(
-                        _this.VIEW_CHANNEL,
+                        VIEW_CHANNEL,
                         _this.currentUser,
                         _this.ChannelStore.getChannel(args[0])
                     )
@@ -100,9 +109,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
             function (args, res) {
                 const menu = args[1]();
                 if (
-                    menu.type &&
-                    menu.type.displayName &&
-                    menu.type.displayName.startsWith("ChannelList") &&
+                    menu.type?.displayName?.startsWith("ChannelList") &&
                     !_this.patchedContexts.find(e => e == menu.type.displayName)
                 ) {
                     if (menu.type.prototype.render) {
@@ -132,6 +139,7 @@ module.exports = class ShowHiddenChannels extends Plugin {
 
     pluginWillUnload() {
         uninject("show-hidden-channels_channelListPatch");
+        uninject("show-hidden-channels_channelItemPrePatch");
         uninject("show-hidden-channels_channelItemPatch");
         uninject("show-hidden-channels_unreadPatch");
         uninject("show-hidden-channels_mentionsPatch");
@@ -144,16 +152,11 @@ module.exports = class ShowHiddenChannels extends Plugin {
     }
 
     patchChannelList(args) {
-        if (_this.patchedLists.find(v => args[0].channels == v.channels))
+        if (_this.patchedLists.find(v => args[0].channels === v.channels))
             return args;
         if (!_this.shouldShow) return args;
-        const {
-            VIEW_CHANNEL,
-            can,
-            currentUser,
-            ChannelStore,
-            channelObject
-        } = _this;
+        _this.patchedLists.push(args[0]);
+        const { can, currentUser, ChannelStore, channelObject } = _this;
 
         const channels = Object.values(ChannelStore.getMutableGuildChannels())
             .filter(c => c.guild_id == args[0].guild.id)
@@ -163,6 +166,13 @@ module.exports = class ShowHiddenChannels extends Plugin {
         );
 
         hiddenChannels.forEach(v => {
+            if (
+                !args[0].channels[v.type == 0 ? "SELECTABLE" : v.type] ||
+                !args[0].categories[
+                    v.type != 4 ? v.parent_id || "null" : "_categories"
+                ]
+            )
+                return;
             if (
                 args[0].channels[v.type == 0 ? "SELECTABLE" : v.type].find(
                     c => c.channel.id == v.id
@@ -198,13 +208,16 @@ module.exports = class ShowHiddenChannels extends Plugin {
 
     cleanUpListPatches() {
         this.patchedLists.forEach((v, i, a) => {
-            const channels = Object.values(this.ChannelStore.getMutableGuildChannels())
+            const channels = Object.values(
+                this.ChannelStore.getMutableGuildChannels()
+            )
                 .filter(c => c.guild_id == v.guild.id)
                 .sort((a, b) => a.position - b.position);
             const hiddenChannels = channels.filter(
-                c => c.type != 4 && !can(this.VIEW_CHANNEL, this.currentUser, c)
+                c =>
+                    c.type != 4 &&
+                    !this.can(VIEW_CHANNEL, this.currentUser, c)
             );
-
             for (var k in v.channels) {
                 if (!Array.isArray(v.channels[k])) continue;
                 v.channels[k] = v.channels[k].filter(
@@ -216,17 +229,13 @@ module.exports = class ShowHiddenChannels extends Plugin {
                     c => !hiddenChannels.find(c1 => c1.id == c.channel.id)
                 );
             }
-
-            a.splice(i, 1);
+            a.splice(0, 1);
         });
     }
 
-    patchChannelItem(args) {
-        const { VIEW_CHANNEL, can, currentUser, channelClasses } = _this;
+    prepatchChannelItem(args) {
+        const { can, currentUser, channelClasses } = _this;
         if (!can(VIEW_CHANNEL, currentUser, args[0].channel)) {
-            args[0].onClick = function () {};
-            args[0].onMouseDown = function () {};
-
             const hasLocked = (args[0].className || "")
                 .split(" ")
                 .indexOf(channelClasses.modeLocked);
@@ -238,5 +247,37 @@ module.exports = class ShowHiddenChannels extends Plugin {
         }
 
         return args;
+    }
+
+    patchChannelItem(args, res) {
+        const { can, currentUser } = _this;
+        if (!can(VIEW_CHANNEL, currentUser, args[0].channel)) {
+            const link = findInReactTree(res, e => e?.props?.role === "link");
+            if (link) {
+                link.props.onClick = () => {};
+                link.props.onFocus = () => {};
+
+                link.props.style = { cursor: "not-allowed" };
+
+                link.type = "div";
+                delete link.props.role;
+            }
+
+            const wrapper = findInReactTree(res, e => e?.props?.onMouseDown);
+            if (wrapper) {
+                wrapper.props.onMouseDown = () => {};
+                wrapper.props.onMouseUp = () => {};
+            }
+
+            const buttonsContainer = findInReactTree(
+                res,
+                e => e?.props?.children?.length === 4
+            );
+            if (buttonsContainer) {
+                buttonsContainer.props.children = null;
+            }
+        }
+
+        return res;
     }
 };
